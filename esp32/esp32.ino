@@ -1,6 +1,6 @@
-// Project: TI-32 v0.1
-// Author:  ChromaLock
-// Date:    2024
+// Project: TI-07 v0.2
+// Author:  Joshua MENDOZA
+// Date:    2025
 
 #include "./secrets.h"
 #include "./launcher.h"
@@ -13,6 +13,7 @@
 #include <HTTPClient.h>
 #include <UrlEncode.h>
 #include <Preferences.h>
+#include <ArduinoOTA.h>
 
 // #define CAMERA
 
@@ -23,15 +24,18 @@
 #include "./camera_index.h"
 #endif
 
-constexpr auto TIP = D1;
-constexpr auto RING = D10;
+// GRND IS NEGATIVE SO THERE IS TWO NEGATIVE PADS
+// UUSB IS POSITIVE BECAREFUL NOT TO FUCK IT UP!!
+constexpr auto TIP = D1; // "TIP" IS EQUAL TO BOTTOM OF THE MINI USB. 
+constexpr auto RING = D10; // "RING" IS EQUAL TO THE TOP RIGHT OF THE MINI USB. 
 constexpr auto MAXHDRLEN = 16;
 constexpr auto MAXDATALEN = 4096;
 constexpr auto MAXARGS = 5;
 constexpr auto MAXSTRARGLEN = 256;
 constexpr auto PICSIZE = 756;
 constexpr auto PICVARSIZE = PICSIZE + 2;
-constexpr auto PASSWORD = 42069;
+constexpr auto PASSWORD = 6351; // this is the password that can be changed
+// 6351 -> P, SEND(P) , 5-> C, SEND(C)
 
 CBL2 cbl;
 Preferences prefs;
@@ -75,6 +79,7 @@ void fetch_chats();
 void send_chat();
 void program_list();
 void fetch_program();
+void setupOTA();
 
 struct Command {
   int id;
@@ -275,6 +280,12 @@ void loop() {
       }
     }
   }
+  
+  // Handle OTA updates if WiFi is connected
+  if (WiFi.isConnected()) {
+    ArduinoOTA.handle();
+  }
+  
   cbl.eventLoopTick();
 }
 
@@ -466,6 +477,46 @@ int makeRequest(String url, char* result, int resultLen, size_t* len) {
   return 0;
 }
 
+void setupOTA() {
+  ArduinoOTA.setHostname("ti32-esp32");
+  
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_SPIFFS
+      type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  
+  ArduinoOTA.begin();
+  Serial.println("OTA ready");
+}
+
 void connect() {
   const char* ssid = WIFI_SSID;
   const char* pass = WIFI_PASS;
@@ -480,10 +531,15 @@ void connect() {
       return;
     }
   }
+  
+  // Setup OTA after WiFi connects
+  setupOTA();
+  
   setSuccess("connected");
 }
 
 void disconnect() {
+  ArduinoOTA.end();
   WiFi.disconnect(true);
   setSuccess("disconnected");
 }
@@ -504,6 +560,15 @@ void gpt() {
   Serial.print("response: ");
   Serial.println(response);
 
+  // Ensure response is null-terminated and fits in message buffer
+  // Truncate if necessary to ensure it fits (setSuccess will copy it)
+  size_t responseLen = strlen(response);
+  if (responseLen >= MAXSTRARGLEN) {
+    response[MAXSTRARGLEN - 1] = '\0';
+  }
+  
+  // Ensure response is properly null-terminated before setting success
+  // This ensures the message buffer gets a valid string that persists
   setSuccess(response);
 }
 
